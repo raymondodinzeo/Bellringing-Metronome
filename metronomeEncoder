@@ -1,0 +1,135 @@
+//Bellringing metronome
+//Metronome for bellringing with short flash for "back" and long flash for "Hand"
+//with time adjusted by a rotary encoder incorporating persistence of time over 
+//reboots with EEPROM wear levelling routine
+//By Ray Houghton
+//===========================================
+#include <EEPROM.h>
+#define A 3 //Pins for encoder
+#define B 4
+#define button1 2 //encoder push button
+unsigned long buttonTime = 0;
+unsigned long lastButtonTime = 0;
+int buttonState1 = 1;
+uint32_t previousMillis = 0;  //initial value of millis
+uint32_t currentMillis; //current value of millis
+const uint8_t ledPin = 5; //(LED)
+uint32_t hand = 200; //long flash
+uint32_t back = 50; //short flash 
+uint32_t interval; //time between flashes
+int ledState = LOW; //initial state of LED (off)
+int toggle = 0; //toggles between short and long flash
+int del; //variable to store flash duration
+byte aState; // States for encoder 
+byte aLastState; 
+uint32_t counter;
+unsigned int workVal;
+int limit = 5000;
+int minimum = 1000;
+unsigned int addr;
+unsigned int val;
+const int inc = 40;
+//========================================================================
+void isr() //Interrupt routine for button press to save counter position
+{
+  buttonTime = millis(); //debounce routine
+  
+  if(buttonTime - lastButtonTime > 250)
+  {
+  buttonState1 = 0; //To indicate button is pressed
+  Serial.println("Button1 pressed"); //prints for debugging
+  Serial.print(addr);  
+  Serial.print("\t");
+  Serial.println(val);
+  EEPROM.write(addr, 0);  //Routine to wear-level EEPROM
+  EEPROM.write(addr+1, 0);
+  EEPROM.put(addr+2,counter);
+  
+ }
+  lastButtonTime = buttonTime;
+ }
+
+//========================================================================
+//=======================================================================
+unsigned int EEPROMReadInt(int p_address)
+//Routine to read an integer from EEPROM
+      {
+      byte lowByte = EEPROM.read(p_address);
+      byte highByte = EEPROM.read(p_address + 1);
+
+      return ((lowByte << 0) & 0xFF) + ((highByte << 8) & 0xFF00);
+      }
+//======================================================================      
+
+
+void setup() 
+{
+pinMode(ledPin, OUTPUT);
+Serial.begin(115200);
+
+pinMode (A,INPUT_PULLUP); //Define pin modes
+pinMode (B,INPUT_PULLUP);
+pinMode (button1, INPUT_PULLUP);
+attachInterrupt(digitalPinToInterrupt(button1), isr, FALLING);
+//Call interrupt service routine
+for (int i = 0 ; i <= 502 ; i=i+2) 
+//Loop to read through EEPROM to find the first non-zero value
+{
+workVal = EEPROMReadInt(i); 
+if(workVal != 0) //Reads EEPROM until first non-zero value is found
+{ 
+val = EEPROMReadInt(i); //Assigns first non-zero to val
+addr = i; //assigns current address to addr
+  Serial.print(addr); //prints debugging data
+  Serial.print("\t");
+  Serial.print(val);
+  Serial.println(); 
+counter = val; //assigns val to encoder counter
+}
+if (addr >= 500) //routine to cycle back to zero
+{
+  EEPROM.write(addr, 0);
+  EEPROM.write(addr+1, 0);
+  addr = 0;
+}
+}
+}
+//=============================================
+void loop() 
+{  
+  interval = counter; //Assigns current encoder counter value to LED interval
+  currentMillis = millis(); //initialize millis()
+  if(currentMillis - previousMillis >= interval) //interval between flashes
+  {
+    ledState = HIGH;  //LED on
+    digitalWrite(ledPin, ledState);
+    
+    if(currentMillis - previousMillis >= interval + del) //flash duration
+      {
+       ledState = LOW; //LED off after flash
+       digitalWrite(ledPin, ledState);
+       previousMillis = currentMillis; //update previousMillis at end of flash 
+       toggle = !toggle;  //routine to assign long and short flash
+       if (toggle == 1)
+       {del = hand;}
+       else {del = back;}
+       }      
+  }  //Encoder routine
+  aState = digitalRead(A); // Reads the "current" state of the A
+     if (aState != aLastState && aState == 1) //&& aState = 1 prevents double counting
+     {   
+if (digitalRead(B) != aState)  
+     {  
+       counter = counter + inc;
+       if(counter >= limit){counter = counter - inc;} //Makes arrays scroll
+       Serial.println(counter);
+     }
+     else 
+     {
+       counter = counter - inc;  
+       if(counter <= minimum){counter = counter + inc;} 
+       Serial.println(counter);
+     }
+    }
+   aLastState = aState; 
+}
