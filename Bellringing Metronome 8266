@@ -1,0 +1,145 @@
+//Bellringing metronome with modifications to work with esp8266
+//Metronome for bellringing with short flash for "back" and long flash for "Hand"
+//with time adjusted by a rotary encoder incorporating persistence of time over 
+//reboots with EEPROM wear levelling routine
+//By Ray Houghton
+//===========================================
+#include <EEPROM.h>
+#define A D4 //Pins for encoder
+#define B D5
+#define button1 D6 //encoder push button
+uint32_t buttonTime = 0;
+uint32_t lastButtonTime = 0;
+int buttonState1 = 1;
+uint32_t previousMillis = 0;  //initial value of millis
+uint32_t currentMillis; //current value of millis
+const uint8_t ledPin = D2; //(LED)
+uint8_t hand = 200; //long flash
+uint8_t back = 50; //short flash 
+uint16_t interval; //time between flashes
+int ledState = LOW; //initial state of LED (off)
+uint8_t toggle = 0; //toggles between short and long flash
+uint8_t del; //variable to store flash duration
+byte aState; // States for encoder 
+byte aLastState; 
+uint16_t counter; //value incremented - decremented by the encoder
+uint16_t workVal;//temporary store for EEPROM reads while looking for non-zero
+uint16_t limit = 5000;//maximum and minimum encoder value
+uint16_t minimum = 1000;
+uint16_t addr; //EEPROM address
+uint16_t val; //current flash duration retreived from EEPROM at startup
+const byte inc = 40; // step length for encoder counter
+uint8_t a = 0; //toggle for interrupt routine
+//========================================================================
+void ICACHE_RAM_ATTR isr() //Interrupt routine for button press to save counter position
+{
+  buttonTime = millis();
+  
+  if(buttonTime - lastButtonTime > 250)
+  {
+  buttonState1 = 0;
+  a = 1; //triggers interrupt handler in void loop()
+  }
+  lastButtonTime = buttonTime;
+ }
+
+//========================================================================
+
+//=======================================================================
+
+unsigned int EEPROMReadInt(int p_address)
+//Function to read a 16-bit integer from EEPROM
+      {
+      byte lowByte = EEPROM.read(p_address);
+      byte highByte = EEPROM.read(p_address + 1);
+
+      return ((lowByte << 0) & 0xFF) + ((highByte << 8) & 0xFF00);
+      }
+//======================================================================      
+
+
+void setup() 
+{
+pinMode(ledPin, OUTPUT);
+//Serial.begin(115200);
+EEPROM.begin(512); //Sets up 512 bytes of flash as EEPROM
+delay(1000); 
+pinMode (A,INPUT_PULLUP); //Define pin modes
+pinMode (B,INPUT_PULLUP);
+pinMode (button1, INPUT_PULLUP);
+attachInterrupt(button1, isr, FALLING); //Sets up interrupt
+//Call interrupt service routine
+for (int i = 0 ; i <= 500 ; i=i+2) 
+//Loop to read through EEPROM to find the first non-zero value
+{
+workVal = EEPROMReadInt(i); 
+if(workVal != 0)
+{ 
+val = EEPROMReadInt(i); //Assigns first non-zero to val
+addr = i; //assigns current address to addr
+  //Serial.print(addr); //prints debugging data
+  //Serial.print("\t");
+  //Serial.print(val);
+  //Serial.println(); 
+counter = val; //assigns val from EEPROM to encoder counter
+}
+if (addr >= 500) //routine to cycle back to zero
+{
+  EEPROM.write(addr, 0);
+  EEPROM.write(addr+1, 0);
+  EEPROM.commit();
+  addr = 0;
+}
+}
+}
+//=============================================
+void loop() 
+{  
+   if(a==1)//a is set to 1 by interrupt service routine
+  {  
+  //Serial.println("Button1 pressed");
+  EEPROM.write(addr, 0);//Wear levelling for EEPROM
+  EEPROM.write(addr+1, 0);
+  EEPROM.put(addr + 2, counter);
+  EEPROM.commit(); //Needed for esp8266 to write to EEPROM
+  //Serial.print(addr+2);
+  //Serial.print("\t"); 
+  //Serial.println(counter);
+  a = 0; //Resets a to zero ready for next interrupt
+  }
+  interval = counter; //Assigns current encoder counter value to LED interval
+  currentMillis = millis(); //initialize millis()
+  if(currentMillis - previousMillis >= interval) //interval between flashes
+  {
+    ledState = HIGH;  //LED on
+    digitalWrite(ledPin, ledState);
+    
+    if(currentMillis - previousMillis >= interval + del) //flash duration
+      {
+       ledState = LOW; //LED off after flash
+       digitalWrite(ledPin, ledState);
+       previousMillis = currentMillis; //update previousMillis at end of flash 
+       toggle = !toggle;  //routine to assign long and short flash
+       if (toggle == 1)
+       {del = hand;}
+       else {del = back;}
+       }      
+  }  //Encoder routine
+  aState = digitalRead(A); // Reads the "current" state of the A
+     if (aState != aLastState && aState == 1) //&& aState = 1 prevents double counting
+     {   
+if (digitalRead(B) != aState)  
+     {  
+       counter = counter + inc;
+       if(counter >= limit){counter = counter - inc;} //Makes arrays scroll
+       //Serial.println(counter);
+     }
+     else 
+     {
+       counter = counter - inc;  
+       if(counter <= minimum){counter = counter + inc;} 
+       //Serial.println(counter);
+     }
+    }
+   aLastState = aState; 
+}
